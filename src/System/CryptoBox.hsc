@@ -24,6 +24,7 @@ module System.CryptoBox
     , sessionId
     , sessionFromPrekey
     , sessionFromMessage
+    , closeSession
     , save
     , encrypt
     , decrypt
@@ -33,6 +34,7 @@ module System.CryptoBox
 
 import Control.Applicative
 import Control.Concurrent
+import Control.Exception (finally)
 import Data.ByteString (ByteString)
 import Data.Hashable
 import Data.HashMap.Strict (HashMap)
@@ -69,7 +71,8 @@ data Box = Box
     }
 
 data Session = Session
-    { sessmutex :: !(MVar ())
+    { sessid    :: !SID
+    , sessmutex :: !(MVar ())
     , sessptr   :: !(ForeignPtr ())
     }
 
@@ -106,9 +109,15 @@ session b i = withMutex (cboxmutex b) $
         Bytes.useAsCString (sid i) $ \ip ->
         alloca                     $ \sp ->
         ifSuccess (cbox_session_get cb ip sp) $ do
-            s <- Session <$> newMVar () <*> (newForeignPtr p_cbox_session_close =<< peek sp)
+            s <- Session i <$> newMVar () <*> (newForeignPtr cbox_session_close =<< peek sp)
             modifyIORef (sessions b) (Map.insert i s)
             return s
+
+closeSession :: Box -> Session -> IO ()
+closeSession b s = withMutex (cboxmutex b) $
+    modifyIORef (sessions b) (Map.delete (sessid s))
+        `finally`
+    withMutex (sessmutex s) (finalizeForeignPtr (sessptr s))
 
 sessionFromPrekey :: Box -> SID -> ByteString -> IO (Result Session)
 sessionFromPrekey b i p = withMutex (cboxmutex b) $
@@ -120,8 +129,8 @@ sessionFromPrekey b i p = withMutex (cboxmutex b) $
         alloca                        $ \sp ->
         ifSuccess (cbox_session_init_from_prekey cb ip (castPtr pp) (fromIntegral pl) sp) $ do
             m <- newMVar ()
-            x <- newForeignPtr p_cbox_session_close =<< peek sp
-            return (Session m x)
+            x <- newForeignPtr cbox_session_close =<< peek sp
+            return (Session i m x)
 
 sessionFromMessage :: Box -> SID -> ByteString -> IO (Result (Session, Vector))
 sessionFromMessage b i m = withMutex (cboxmutex b) $
@@ -134,9 +143,9 @@ sessionFromMessage b i m = withMutex (cboxmutex b) $
         alloca                        $ \vp ->
         ifSuccess (cbox_session_init_from_message cb ip (castPtr pp) (fromIntegral pl) sp vp) $ do
             l <- newMVar ()
-            x <- newForeignPtr p_cbox_session_close =<< peek sp
+            x <- newForeignPtr cbox_session_close =<< peek sp
             v <- newVector =<< peek vp
-            return (Session l x, v)
+            return (Session i l x, v)
 
     existing s = fmap (s, ) <$> decrypt s m
 
@@ -277,7 +286,7 @@ foreign import ccall unsafe "cbox.h cbox_session_id"
     cbox_session_id :: CBoxSession -> IO CString
 
 foreign import ccall "cbox.h &cbox_session_close"
-    p_cbox_session_close :: FunPtr (CBoxSession  -> IO ())
+    cbox_session_close :: FunPtr (CBoxSession  -> IO ())
 
 foreign import ccall unsafe "cbox.h cbox_encrypt"
     cbox_encrypt :: CBoxSession -> Ptr Word8 -> CUInt -> Ptr CBoxVec -> IO ()
