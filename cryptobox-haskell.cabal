@@ -1,5 +1,5 @@
 name:                 cryptobox-haskell
-version:              0.0.1
+version:              0.0.2
 synopsis:             Haskell bindings to cryptobox
 author:               Toralf Wittner
 maintainer:           Toralf Wittner <tw@dtex.org>

@@ -30,6 +30,7 @@ module System.CryptoBox
     , decrypt
     , remoteFingerprint
     , localFingerprint
+    , randomBytes
     ) where
 
 import Control.Applicative
@@ -100,6 +101,10 @@ newPrekey b i = withMutex (cboxmutex b) $
     alloca          $ \v ->
     ifSuccess (cbox_new_prekey cb (fromIntegral i) v) $
         Prekey <$> (newVector =<< peek v)
+
+randomBytes :: Box -> Word32 -> IO Vector
+randomBytes b n = withCryptoBox b $ \cb -> -- No need for mutex.
+    cbox_random_bytes cb (fromIntegral n) >>= newVector
 
 session :: Box -> SID -> IO (Result Session)
 session b i = withMutex (cboxmutex b) $
@@ -255,6 +260,9 @@ foreign import ccall unsafe "cbox.h cbox_file_open"
 
 foreign import ccall "cbox.h &cbox_close"
     cbox_close :: FunPtr (CBox  -> IO ())
+
+foreign import ccall unsafe "cbox.h cbox_random_bytes"
+    cbox_random_bytes :: CBox -> CUInt -> IO CBoxVec
 
 foreign import ccall unsafe "cbox.h cbox_new_prekey"
     cbox_new_prekey :: CBox -> CUShort -> Ptr CBoxVec -> IO CInt
