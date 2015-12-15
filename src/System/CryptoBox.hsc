@@ -72,6 +72,10 @@ data Result a
     | OutdatedMessage
     | Utf8Error
     | NulError
+    | EncodeError
+    | IdentityError
+    | NoPrekey
+    | Panic
     | Unknown !Int
     deriving (Eq, Ord, Show, Functor)
 
@@ -233,7 +237,7 @@ withSession s = withForeignPtr (sessptr s)
 
 cboxError :: CInt -> Result a
 cboxError (#const CBOX_STORAGE_ERROR)           = StorageError
-cboxError (#const CBOX_NO_SESSION)              = NoSession
+cboxError (#const CBOX_SESSION_NOT_FOUND)       = NoSession
 cboxError (#const CBOX_DECODE_ERROR)            = DecodeError
 cboxError (#const CBOX_REMOTE_IDENTITY_CHANGED) = RemoteIdentityChanged
 cboxError (#const CBOX_INVALID_SIGNATURE)       = InvalidSignature
@@ -243,6 +247,10 @@ cboxError (#const CBOX_TOO_DISTANT_FUTURE)      = TooDistantFuture
 cboxError (#const CBOX_OUTDATED_MESSAGE)        = OutdatedMessage
 cboxError (#const CBOX_UTF8_ERROR)              = Utf8Error
 cboxError (#const CBOX_NUL_ERROR)               = NulError
+cboxError (#const CBOX_ENCODE_ERROR)            = EncodeError
+cboxError (#const CBOX_IDENTITY_ERROR)          = IdentityError
+cboxError (#const CBOX_PREKEY_NOT_FOUND)        = NoPrekey
+cboxError (#const CBOX_PANIC)                   = Panic
 cboxError cint                                  = Unknown (fromIntegral cint)
 
 success :: CInt
