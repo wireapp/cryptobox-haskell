@@ -31,11 +31,11 @@ module System.CryptoBox
     , open
     , newPrekey
     , session
-    , sessionId
     , sessionFromPrekey
     , sessionFromMessage
-    , closeSession
+    , close
     , save
+    , delete
     , encrypt
     , decrypt
     , remoteFingerprint
@@ -52,6 +52,7 @@ import Data.HashMap.Strict (HashMap)
 import Data.IORef
 import Foreign hiding (void, copyBytes)
 import Foreign.C
+import Prelude
 
 import qualified Data.ByteString        as Bytes
 import qualified Data.ByteString.Unsafe as Bytes
@@ -116,9 +117,11 @@ newPrekey b i = withMutex (cboxmutex b) $
     ifSuccess (cbox_new_prekey cb (fromIntegral i) v) $
         Prekey <$> (newVector =<< peek v)
 
-randomBytes :: Box -> Word32 -> IO Vector
+randomBytes :: Box -> Word32 -> IO (Result Vector)
 randomBytes b n = withCryptoBox b $ \cb -> -- No need for mutex.
-    cbox_random_bytes cb (fromIntegral n) >>= newVector
+    alloca $ \v ->
+    ifSuccess (cbox_random_bytes cb (fromIntegral n) v) $
+        newVector =<< peek v
 
 session :: Box -> SID -> IO (Result Session)
 session b i = withMutex (cboxmutex b) $
@@ -127,16 +130,23 @@ session b i = withMutex (cboxmutex b) $
     fresh = withCryptoBox b        $ \cb ->
         Bytes.useAsCString (sid i) $ \ip ->
         alloca                     $ \sp ->
-        ifSuccess (cbox_session_get cb ip sp) $ do
+        ifSuccess (cbox_session_load cb ip sp) $ do
             s <- Session i <$> newMVar () <*> (newForeignPtr cbox_session_close =<< peek sp)
             modifyIORef (sessions b) (Map.insert i s)
             return s
 
-closeSession :: Box -> Session -> IO ()
-closeSession b s = withMutex (cboxmutex b) $
+close :: Box -> Session -> IO ()
+close b s = withMutex (cboxmutex b) $
     modifyIORef (sessions b) (Map.delete (sessid s))
         `finally`
     withMutex (sessmutex s) (finalizeForeignPtr (sessptr s))
+
+delete :: Box -> SID -> IO (Result ())
+delete b i = withMutex (cboxmutex b) $ do
+    modifyIORef (sessions b) (Map.delete i)
+    withCryptoBox b $ \cb ->
+        Bytes.useAsCString (sid i) $ \ip ->
+        ifSuccess (cbox_session_delete cb ip) (pure ())
 
 sessionFromPrekey :: Box -> SID -> ByteString -> IO (Result Session)
 sessionFromPrekey b i p = withMutex (cboxmutex b) $
@@ -172,18 +182,13 @@ save :: Session -> IO (Result ())
 save s = withMutex (sessmutex s) $ withSession s $ \sp ->
     ifSuccess (cbox_session_save sp) (pure ())
 
-sessionId :: Session -> IO (Result SID)
-sessionId s = withMutex (sessmutex s) $ withSession s $ \sp -> do
-    i <- cbox_session_id sp
-    Success . SID <$> Bytes.unsafePackCString i
-
-encrypt :: Session -> ByteString -> IO Vector
+encrypt :: Session -> ByteString -> IO (Result Vector)
 encrypt s plain = withMutex (sessmutex s) $
     withSession s                     $ \sp ->
     Bytes.unsafeUseAsCStringLen plain $ \(pp, pl) ->
     alloca                            $ \vp -> do
-    cbox_encrypt sp (castPtr pp) (fromIntegral pl) vp
-    newVector =<< peek vp
+    ifSuccess (cbox_encrypt sp (castPtr pp) (fromIntegral pl) vp) $
+        newVector =<< peek vp
 
 decrypt :: Session -> ByteString -> IO (Result Vector)
 decrypt s cipher = withMutex (sessmutex s) $
@@ -193,19 +198,17 @@ decrypt s cipher = withMutex (sessmutex s) $
     ifSuccess (cbox_decrypt sp (castPtr pp) (fromIntegral pl) vp) $
         newVector =<< peek vp
 
-remoteFingerprint :: Session -> IO Vector
+remoteFingerprint :: Session -> IO (Result Vector)
 remoteFingerprint s = withMutex (sessmutex s) $
     withSession s $ \sp ->
     alloca        $ \vp -> do
-    cbox_fingerprint_remote sp vp
-    newVector =<< peek vp
+    ifSuccess (cbox_fingerprint_remote sp vp) $ newVector =<< peek vp
 
-localFingerprint :: Box -> IO Vector
+localFingerprint :: Box -> IO (Result Vector)
 localFingerprint b = withMutex (cboxmutex b) $
     withCryptoBox b $ \cb ->
     alloca          $ \vp -> do
-    cbox_fingerprint_local cb vp
-    newVector =<< peek vp
+    ifSuccess (cbox_fingerprint_local cb vp) $ newVector =<< peek vp
 
 withVector :: Vector -> (ByteString -> IO a) -> IO a
 withVector v f = withForeignPtr (vec v) $ \vp -> do
@@ -280,7 +283,7 @@ foreign import ccall "cbox.h &cbox_close"
     cbox_close :: FunPtr (CBox  -> IO ())
 
 foreign import ccall unsafe "cbox.h cbox_random_bytes"
-    cbox_random_bytes :: CBox -> CUInt -> IO CBoxVec
+    cbox_random_bytes :: CBox -> CUInt -> Ptr CBoxVec -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_new_prekey"
     cbox_new_prekey :: CBox -> CUShort -> Ptr CBoxVec -> IO CInt
@@ -302,26 +305,26 @@ foreign import ccall unsafe "cbox.h cbox_session_init_from_message"
                                    -> Ptr CBoxVec
                                    -> IO CInt
 
-foreign import ccall unsafe "cbox.h cbox_session_get"
-    cbox_session_get :: CBox -> CString -> Ptr CBoxSession -> IO CInt
+foreign import ccall unsafe "cbox.h cbox_session_load"
+    cbox_session_load :: CBox -> CString -> Ptr CBoxSession -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_session_save"
     cbox_session_save :: CBoxSession -> IO CInt
 
-foreign import ccall unsafe "cbox.h cbox_session_id"
-    cbox_session_id :: CBoxSession -> IO CString
-
 foreign import ccall "cbox.h &cbox_session_close"
     cbox_session_close :: FunPtr (CBoxSession  -> IO ())
 
+foreign import ccall "cbox.h cbox_session_delete"
+    cbox_session_delete :: CBoxSession -> CString -> IO CInt
+
 foreign import ccall unsafe "cbox.h cbox_encrypt"
-    cbox_encrypt :: CBoxSession -> Ptr Word8 -> CUInt -> Ptr CBoxVec -> IO ()
+    cbox_encrypt :: CBoxSession -> Ptr Word8 -> CUInt -> Ptr CBoxVec -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_decrypt"
     cbox_decrypt :: CBoxSession -> Ptr Word8 -> CUInt -> Ptr CBoxVec -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_fingerprint_local"
-    cbox_fingerprint_local :: CBox -> Ptr CBoxVec -> IO ()
+    cbox_fingerprint_local :: CBox -> Ptr CBoxVec -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_fingerprint_remote"
-    cbox_fingerprint_remote :: CBoxSession -> Ptr CBoxVec -> IO ()
+    cbox_fingerprint_remote :: CBoxSession -> Ptr CBoxVec -> IO CInt
