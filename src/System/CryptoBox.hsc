@@ -214,7 +214,9 @@ withVector :: Vector -> (ByteString -> IO a) -> IO a
 withVector v f = withForeignPtr (vec v) $ \vp -> do
     b <- castPtr <$> cbox_vec_data vp
     n <- fromIntegral <$> cbox_vec_len vp
-    Bytes.unsafePackCStringLen (b, n) >>= f
+    Bytes.unsafePackCStringLen (b, n) >>= \bytes -> do
+        x <- f bytes
+        x `seq` return x
 
 copyBytes :: Vector -> IO ByteString
 copyBytes v = withVector v (pure . Bytes.copy)
