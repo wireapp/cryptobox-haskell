@@ -1,5 +1,5 @@
 name:                 cryptobox-haskell
-version:              0.1.0
+version:              0.1.1
 synopsis:             Haskell bindings to cryptobox
 author:               Wire Swiss GmbH
 maintainer:           Wire Swiss GmbH <support@wire.com>

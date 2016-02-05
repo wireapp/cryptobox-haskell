@@ -30,6 +30,7 @@ module System.CryptoBox
     , copyBytes
     , open
     , newPrekey
+    , isPrekeyBundle
     , session
     , sessionFromPrekey
     , sessionFromMessage
@@ -147,6 +148,13 @@ delete b i = withMutex (cboxmutex b) $ do
     withCryptoBox b $ \cb ->
         Bytes.useAsCString (sid i) $ \ip ->
         ifSuccess (cbox_session_delete cb ip) (pure ())
+
+isPrekeyBundle :: ByteString -> IO (Result Bool)
+isPrekeyBundle b =
+    Bytes.unsafeUseAsCStringLen b $ \(ptr, len) ->
+    alloca                        $ \result ->
+    ifSuccess (cbox_is_prekey_bundle (castPtr ptr) (fromIntegral len) result)
+        ((== 1) <$> peek result)
 
 sessionFromPrekey :: Box -> SID -> ByteString -> IO (Result Session)
 sessionFromPrekey b i p = withMutex (cboxmutex b) $
@@ -330,3 +338,6 @@ foreign import ccall unsafe "cbox.h cbox_fingerprint_local"
 
 foreign import ccall unsafe "cbox.h cbox_fingerprint_remote"
     cbox_fingerprint_remote :: CBoxSession -> Ptr CBoxVec -> IO CInt
+
+foreign import ccall unsafe "cbox.h cbox_is_prekey_bundle"
+    cbox_is_prekey_bundle :: Ptr Word8 -> CUInt -> Ptr Word8 -> IO CInt
