@@ -23,6 +23,7 @@ module System.CryptoBox
     ( Result    (..)
     , SID       (..)
     , Prekey    (..)
+    , PrekeyId  (..)
     , Vector
     , Box
     , Session
@@ -30,6 +31,7 @@ module System.CryptoBox
     , copyBytes
     , open
     , newPrekey
+    , isPrekey
     , session
     , sessionFromPrekey
     , sessionFromMessage
@@ -92,9 +94,10 @@ data Session = Session
     , sessptr   :: !(ForeignPtr ())
     }
 
-newtype Vector = Vector { vec    :: ForeignPtr () }
-newtype Prekey = Prekey { prekey :: Vector        }
-newtype SID    = SID    { sid    :: ByteString    } deriving (Eq, Hashable)
+newtype Vector   = Vector   { vec      :: ForeignPtr () }
+newtype Prekey   = Prekey   { prekey   :: Vector        }
+newtype PrekeyId = PrekeyId { prekeyId :: Word16        }
+newtype SID      = SID      { sid      :: ByteString    } deriving (Eq, Hashable)
 
 instance Show Vector  where show = const "Vector"
 instance Show Box     where show = const "Box"
@@ -147,6 +150,13 @@ delete b i = withMutex (cboxmutex b) $ do
     withCryptoBox b $ \cb ->
         Bytes.useAsCString (sid i) $ \ip ->
         ifSuccess (cbox_session_delete cb ip) (pure ())
+
+isPrekey :: ByteString -> IO (Result PrekeyId)
+isPrekey b =
+    Bytes.unsafeUseAsCStringLen b $ \(ptr, len) ->
+    alloca                        $ \result ->
+    ifSuccess (cbox_is_prekey (castPtr ptr) (fromIntegral len) result)
+        (PrekeyId <$> peek result)
 
 sessionFromPrekey :: Box -> SID -> ByteString -> IO (Result Session)
 sessionFromPrekey b i p = withMutex (cboxmutex b) $
@@ -330,3 +340,6 @@ foreign import ccall unsafe "cbox.h cbox_fingerprint_local"
 
 foreign import ccall unsafe "cbox.h cbox_fingerprint_remote"
     cbox_fingerprint_remote :: CBoxSession -> Ptr CBoxVec -> IO CInt
+
+foreign import ccall unsafe "cbox.h cbox_is_prekey"
+    cbox_is_prekey :: Ptr Word8 -> CUInt -> Ptr Word16 -> IO CInt
