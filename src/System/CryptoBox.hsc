@@ -188,9 +188,11 @@ sessionFromMessage b i m = withMutex (cboxmutex b) $
 
     existing s = fmap (s, ) <$> decrypt s m
 
-save :: Session -> IO (Result ())
-save s = withMutex (sessmutex s) $ withSession s $ \sp ->
-    ifSuccess (cbox_session_save sp) (pure ())
+save :: Box -> Session -> IO (Result ())
+save b s = withMutex (sessmutex s) $
+    withCryptoBox b $ \cb ->
+    withSession s   $ \sp ->
+    ifSuccess (cbox_session_save cb sp) (pure ())
 
 encrypt :: Session -> ByteString -> IO (Result Vector)
 encrypt s plain = withMutex (sessmutex s) $
@@ -321,7 +323,7 @@ foreign import ccall unsafe "cbox.h cbox_session_load"
     cbox_session_load :: CBox -> CString -> Ptr CBoxSession -> IO CInt
 
 foreign import ccall unsafe "cbox.h cbox_session_save"
-    cbox_session_save :: CBoxSession -> IO CInt
+    cbox_session_save :: CBox -> CBoxSession -> IO CInt
 
 foreign import ccall "cbox.h &cbox_session_close"
     cbox_session_close :: FunPtr (CBoxSession  -> IO ())
